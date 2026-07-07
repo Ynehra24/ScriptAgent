@@ -1,6 +1,6 @@
-# UIVLM
+# ScriptAgent
 
-UIVLM is an early work-in-progress project for controlling desktop UI and
+ScriptAgent is an early work-in-progress project for controlling desktop UI and
 applications with vision/language-model style agents. The current runnable
 prototype focuses on Microsoft Word automation on macOS through AppleScript and
 Gemini-based planning.
@@ -120,7 +120,7 @@ python -m basic_testing
 ## Folder Structure
 
 ```text
-UIVLM/
+ScriptAgent/
 ├── README.md
 ├── LICENSE
 ├── tester.py
