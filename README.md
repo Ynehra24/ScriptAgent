@@ -3,7 +3,7 @@
 ScriptAgent is an early work-in-progress project for controlling desktop UI and
 applications with vision/language-model style agents. The current runnable
 prototype focuses on Microsoft Word automation on macOS through AppleScript and
-Gemini-based planning.
+LLM-based planning through OpenRouter.
 
 This repository is not production-ready yet. It is currently a learning and
 experimentation workspace with several holes, rough edges, and partially explored
@@ -29,18 +29,17 @@ Currently implemented:
   - first 100 paragraph previews
 - Parses Microsoft Word's installed AppleScript dictionary (`Word.sdef`) to build
   a searchable schema of classes, properties, elements, commands, and enums.
-- Uses Gemini to:
+- Uses an OpenRouter-backed LLM to:
   - select relevant Word classes for a task
   - select metadata/property fields to inspect
   - plan the next structured action
-- Supports these planner actions:
+- Supports these executor capabilities:
   - `insert_text`
-  - `replace_text`
-  - `format_matches`
+  - `replace_paragraph`
   - `delete_paragraph`
-  - `save_document`
-  - `set_properties`
-  - `done`
+  - `format_paragraph`
+  - `insert_table`
+  - `property_write`
 - Supports insertion formatting options:
   - font name
   - font size
@@ -61,7 +60,7 @@ This is still very much a work in progress.
 - The Word automation depends on AppleScript object codes and Word's local
   scripting dictionary, so behavior may vary across Word versions.
 - There is no formal test suite yet.
-- There is no dependency file yet (`requirements.txt` / `pyproject.toml`).
+- A minimal dependency file is present as `requirements.txt`.
 - Error recovery is basic; failed planner actions are recorded, but the agent can
   still loop or choose weak follow-up actions.
 - Content verification is shallow compared with property verification.
@@ -79,22 +78,23 @@ Current practical requirements:
 - macOS
 - Microsoft Word installed
 - Python 3.12+ recommended
-- A Gemini API key in `.env`:
+- An OpenRouter API key in `.env`:
 
 ```bash
-GEMINI_KEY=your_key_here
+OPENROUTER_API_KEY=your_key_here
+# Optional comma-separated model fallback list:
+OPENROUTER_MODELS=openai/gpt-4o-mini,anthropic/claude-3.5-haiku,google/gemini-2.5-flash
 ```
 
 Python packages used by the current prototype:
 
 - `python-dotenv`
-- `google-genai`
 - `tqdm`
 
 Install them manually for now:
 
 ```bash
-pip install python-dotenv google-genai tqdm
+pip install -r requirements.txt
 ```
 
 ## Running
@@ -169,11 +169,11 @@ ScriptAgent/
   properties.
 - `basic_testing/content_actions.py`: reads document content and performs text
   actions.
-- `basic_testing/gemini_client.py`: Gemini client setup, retries, and JSON
+- `basic_testing/gemini_client.py`: OpenRouter client setup, retries, and JSON
   response handling.
 - `basic_testing/prompts.py`: planner and selector prompts.
 - `basic_testing/selectors.py`: chooses relevant Word classes and metadata fields.
-- `basic_testing/planner.py`: builds planner input and calls Gemini.
+- `basic_testing/planner.py`: builds planner input and calls the configured LLM.
 - `basic_testing/utils.py`: shared string/name helpers.
 
 ## Development Notes
@@ -191,8 +191,6 @@ Important local artifacts:
 
 Suggested next improvements:
 
-- Add `requirements.txt` or `pyproject.toml`.
-- Add a `.gitignore` for logs, caches, `.env`, datasets, and generated artifacts.
 - Add unit tests for path parsing, value coercion, and planner action validation.
 - Add safer dry-run or confirmation mode for destructive Word actions.
 - Improve content-level verification after insert/replace/delete/format actions.

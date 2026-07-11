@@ -1,6 +1,7 @@
 import re
 import xml.etree.ElementTree as ET
 from collections import deque
+from functools import cached_property
 
 from .config import WORD_SDEF_PATHS
 from .utils import normalize_name
@@ -101,6 +102,153 @@ class WordSchema:
             for item in self.commands.values()
         ]
 
+    @cached_property
+    def search_documents(self) -> list[dict]:
+        documents = []
+        for name, item in self.classes.items():
+            properties = self.inherited_properties(name)
+            documents.append(
+                {
+                    "kind": "class",
+                    "name": name,
+                    "tokens": self._search_text(
+                        name,
+                        item.get("plural"),
+                        item.get("inherits"),
+                        item.get("description"),
+                        " ".join(item.get("elements", [])),
+                        " ".join(
+                            f"{prop.get('name')} {prop.get('type')} {prop.get('description')}"
+                            for prop in properties
+                        ),
+                    ),
+                }
+            )
+            for prop in properties:
+                documents.append(
+                    {
+                        "kind": "property",
+                        "name": prop.get("name"),
+                        "owner": name,
+                        "tokens": self._search_text(
+                            name,
+                            prop.get("name"),
+                            prop.get("type"),
+                            prop.get("description"),
+                        ),
+                    }
+                )
+        for name, item in self.commands.items():
+            documents.append(
+                {
+                    "kind": "command",
+                    "name": name,
+                    "tokens": self._search_text(
+                        name,
+                        item.get("description"),
+                        " ".join(
+                            f"{param.get('name')} {param.get('type')}"
+                            for param in item.get("parameters", [])
+                        ),
+                    ),
+                }
+            )
+        return documents
+
+    def search(self, query: str, limit: int = 12) -> list[dict]:
+        terms = set(self._tokenize(query))
+        if not terms:
+            return []
+        scored = []
+        for document in self.search_documents:
+            tokens = document["tokens"]
+            score = sum(tokens.count(term) for term in terms)
+            if score:
+                scored.append((score, document))
+        scored.sort(key=lambda item: (-item[0], item[1]["kind"], item[1]["name"]))
+        return [self._document_snippet(document) for _, document in scored[:limit]]
+
+    def focused_context(self, query: str, selected_classes: list[str]) -> dict:
+        classes = {
+            name
+            for name in selected_classes
+            if name in self.classes
+        }
+        for result in self.search(query, limit=12):
+            if result["kind"] == "class" and result["name"] in self.classes:
+                classes.add(result["name"])
+            if result["kind"] == "property" and result.get("owner") in self.classes:
+                classes.add(result["owner"])
+        commands = [
+            result
+            for result in self.search(query, limit=24)
+            if result["kind"] == "command"
+        ][:8]
+        return {
+            "query": query,
+            "matches": self.search(query, limit=16),
+            "classes": {
+                name: self.class_snippet(name)
+                for name in sorted(classes)
+            },
+            "commands": commands,
+        }
+
+    def class_snippet(self, class_name: str) -> dict:
+        item = self.classes[class_name]
+        return {
+            "name": class_name,
+            "plural": item.get("plural"),
+            "inherits": item.get("inherits"),
+            "description": item.get("description", ""),
+            "elements": item.get("elements", []),
+            "properties": [
+                {
+                    "name": prop.get("name"),
+                    "type": prop.get("type"),
+                    "list": prop.get("list"),
+                    "writable": prop.get("writable"),
+                    "description": prop.get("description", "")[:220],
+                    "enum_values": self.enum_values(prop.get("type")),
+                }
+                for prop in self.inherited_properties(class_name)
+            ],
+        }
+
+    def _document_snippet(self, document: dict) -> dict:
+        kind = document["kind"]
+        if kind == "class":
+            return {
+                "kind": kind,
+                "name": document["name"],
+                "description": self.classes[document["name"]].get("description", "")[:220],
+            }
+        if kind == "command":
+            command = self.commands[document["name"]]
+            return {
+                "kind": kind,
+                "name": document["name"],
+                "description": command.get("description", "")[:220],
+                "parameters": command.get("parameters", []),
+            }
+        return {
+            "kind": kind,
+            "owner": document["owner"],
+            "name": document["name"],
+        }
+
+    @staticmethod
+    def _tokenize(value: str) -> list[str]:
+        return [
+            token
+            for token in re.split(r"[^a-z0-9]+", str(value).lower())
+            if len(token) > 1
+        ]
+
+    @classmethod
+    def _search_text(cls, *values) -> list[str]:
+        return cls._tokenize(" ".join(str(value or "") for value in values))
+
     def inherited_properties(self, class_name: str) -> list[dict]:
         result = []
         seen = set()
@@ -164,6 +312,8 @@ class WordSchema:
                     if prop["type"] in self.classes:
                         continue
                     canonical = f"{route}.{normalize_name(prop['name'])}"
+                    if canonical.count("[*]") > 1:
+                        continue
                     fields[canonical] = {
                         "path": canonical,
                         "owner_class": class_name,

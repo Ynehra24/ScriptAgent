@@ -12,10 +12,10 @@ responsibility so each part is easier to inspect and improve.
 - `property_path.py`: validates property paths and converts them to AppleScript.
 - `property_actions.py`: reads, sets, verifies, and compacts Word properties.
 - `content_actions.py`: reads document content and performs text actions.
-- `gemini_client.py`: Gemini client setup and JSON response handling.
+- `gemini_client.py`: OpenRouter client setup and JSON response handling.
 - `prompts.py`: planner and selector prompts.
 - `selectors.py`: chooses relevant Word classes and metadata fields.
-- `planner.py`: builds planner input and calls Gemini.
+- `planner.py`: builds planner input and calls the configured LLM.
 - `utils.py`: small shared helpers.
 
 You can still run the project exactly as before:

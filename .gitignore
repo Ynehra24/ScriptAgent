@@ -1,2 +1,10 @@
 .env
 trainingmodel.ipynb
+__pycache__/
+*.py[cod]
+.DS_Store
+venv/
+scriptagent.log
+scriptagent.log.*
+trajectory.jsonl
+datasets/
