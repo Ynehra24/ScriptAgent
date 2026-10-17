@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-import os
-import re
-from typing import Any, Dict, List, Optional
+import os # OS interactions
+import re # Regex string support
+from typing import Any, Dict, List, Optional # Gradual typing support??? -> Doesn't make a lot of sense here??? -> Majorly used for showing what type of argument each config var is supporting
+import pathlib
 
-from docx import Document
-from openai import OpenAI
+from docx import Document # Allows support for docx file paths or file instances
+from openai import OpenAI # OpenAI package support for API and model calls
 
+"""
+Class imports from other files
+"""
 from .applescript_generator import AppleScriptCodeGenerator
-from .config import AutomationConfig
+from .config import AutomationConfig 
 from .decomposer import TaskDecomposer
+from .document_map import build_document_map
 from .docx_generator import PythonDocxCodeGenerator
 
 
@@ -21,7 +26,7 @@ class WordAutomationPipeline:
     3. Osaurus AppleScript-8B (App-level control - edge cases, with Nemotron fallback if Osaurus offline)
 
     Supports:
-    - Referencing and editing existing documents without overwriting.
+    - Referencing and editing existing documents with precise Paragraph IDs ([P0], [P1]...) without overwriting.
     - Creating new documents when the referenced file does not exist.
     - Explicit overwrite when requested via parameter or prompt keyword.
     """
@@ -93,7 +98,6 @@ class WordAutomationPipeline:
         if match:
             return match.group(0)
 
-        # Extract title keywords or default
         clean = re.sub(r"[^\w\s]", "", user_request.lower())
         words = [
             w for w in clean.split()
@@ -113,30 +117,13 @@ class WordAutomationPipeline:
                 return True
         return False
 
-    def _get_document_summary(self, filename: str) -> str:
-        """Extract a structured summary of an existing document for model context."""
-        try:
-            doc = Document(filename)
-            paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-            tables_count = len(doc.tables)
-            sections_count = len(doc.sections)
-            summary = (
-                f"Existing document '{filename}': {len(paragraphs)} paragraph(s), "
-                f"{tables_count} table(s), {sections_count} section(s)."
-            )
-            if paragraphs:
-                preview = "\n".join([f"  P{i+1}: {p[:120]}" for i, p in enumerate(paragraphs[:6])])
-                summary += f"\nExisting Paragraphs Preview:\n{preview}"
-            return summary
-        except Exception as e:
-            return f"Existing file '{filename}' could not be inspected: {e}"
-
     def execute(
         self,
         user_request: str,
         target_file: Optional[str] = None,
         overwrite: bool = False,
         verbose: bool = True,
+        folder: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute a Word automation request end-to-end.
@@ -149,8 +136,37 @@ class WordAutomationPipeline:
             verbose: Whether to print progress logs to stdout
         """
         target_filename = self._determine_target_filename(user_request, target_file)
+
+        if folder:
+            folder_path = pathlib.Path(folder).expanduser()
+
+            if folder_path.exists() and not folder_path.is_dir():
+                raise NotADirectoryError(
+                    f"The specified folder is not a directory: {folder_path}"
+                )
+
+            folder_path.mkdir(parents=True, exist_ok=True)
+
+            explicit_path = pathlib.Path(target_file).expanduser() if target_file else None
+
+            has_explicit_directory = (
+                explicit_path is not None
+                and (
+                    explicit_path.is_absolute()
+                    or explicit_path.parent != pathlib.Path(".")
+                    or "/" in target_file
+                    or "\\" in target_file
+                )
+            )
+
+            if not has_explicit_directory:
+                target_filename = str(folder_path / pathlib.Path(target_filename).name)
+
         explicit_overwrite = self._is_explicit_overwrite(user_request, overwrite)
-        doc_already_exists = os.path.exists(target_filename) and os.path.isfile(target_filename)
+        doc_already_exists = (
+            os.path.exists(target_filename)
+            and os.path.isfile(target_filename)
+        )
 
         if doc_already_exists and not explicit_overwrite:
             mode = "EDIT_EXISTING"
@@ -180,9 +196,10 @@ class WordAutomationPipeline:
 
         doc_context = None
         if mode == "EDIT_EXISTING":
-            doc_context = self._get_document_summary(target_filename)
+            doc_map = build_document_map(target_filename)
+            doc_context = doc_map.to_prompt_context()
             if verbose:
-                print(f"📖 Context: {doc_context}\n")
+                print(f"🗺️ {doc_context}\n")
 
         total_tokens = 0
 
@@ -209,7 +226,6 @@ class WordAutomationPipeline:
                 description = subtask.get("description", "")
                 is_first_subtask = (i == 0)
 
-                # Ensure consistent filename in description
                 if target_filename not in description:
                     description = f"Target file '{target_filename}'. " + description
 
@@ -223,6 +239,7 @@ class WordAutomationPipeline:
                         target_filename=target_filename,
                         is_first_subtask=is_first_subtask,
                         mode=mode,
+                        doc_context=doc_context,
                         verbose=verbose,
                     )
                 elif task_type == "APP_CONTROL":
@@ -285,6 +302,7 @@ class WordAutomationPipeline:
         target_filename: str,
         is_first_subtask: bool,
         mode: str,
+        doc_context: Optional[str],
         verbose: bool,
     ) -> tuple[Dict[str, Any], int]:
         total_tokens = 0
@@ -292,11 +310,15 @@ class WordAutomationPipeline:
         last_code = ""
         last_output = ""
 
-        # Context guidance based on whether we are editing an existing document or creating new
         if mode == "EDIT_EXISTING":
             context_guidance = (
-                f"EDITING EXISTING DOCUMENT: '{target_filename}' already exists and contains data. "
+                f"EDITING EXISTING DOCUMENT: '{target_filename}' already exists.\n"
+                f"{doc_context or ''}\n"
                 f"Open it with `filename = '{target_filename}'; doc = Document(filename)`. "
+                f"Use exact paragraph indices [P0], [P1]... as mapped above. "
+                f"To delete [P_idx]: `p = doc.paragraphs[idx]; p._element.getparent().remove(p._element)`. "
+                f"To insert after [P_idx]: `p = doc.paragraphs[idx]; new_p = doc.add_paragraph('...'); p._p.addnext(new_p._p)`. "
+                f"To append at bottom: `doc.add_paragraph('...')`. "
                 f"Preserve all existing paragraphs/content unless explicitly instructed to replace or modify them. "
                 f"Save changes to `doc.save(filename)`."
             )
@@ -317,7 +339,7 @@ class WordAutomationPipeline:
                     retry_label = f" (Attempt {attempt}/{self.max_retries})" if attempt > 1 else ""
                     print(f"   📄 Generating python-docx code via Nemotron{retry_label}...")
 
-                full_desc = f"{context_guidance}\n{description}"
+                full_desc = f"{context_guidance}\n\nTask: {description}"
                 code, tokens = self.docx_gen.generate_with_usage(
                     full_desc,
                     self.nemotron,

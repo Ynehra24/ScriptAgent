@@ -13,15 +13,16 @@ import docx
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import parse_xml
-from docx.oxml.ns import nsdecls
+from docx.oxml import OxmlElement, parse_xml
+from docx.oxml.ns import nsdecls, qn
 from docx.shared import Cm, Inches, Mm, Pt, RGBColor
 
 
 class PythonDocxCodeGenerator:
     """
     Generates and executes concise, robust python-docx code for file manipulation tasks.
-    Supports creating new documents as well as referencing and editing existing documents without overwriting.
+    Supports creating new documents, precision editing with Paragraph IDs ([P0], [P1]...),
+    advanced image wrapping/layering, and custom table/page borders.
     """
 
     CONTEXT = r"""
@@ -33,24 +34,82 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor, Cm, Mm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml import parse_xml, OxmlElement
+from docx.oxml.ns import nsdecls, qn
 
-# 1. Opening/Creating Documents:
+# 1. Opening Documents:
 # A) Brand NEW document:
 # filename = 'new_doc.docx'
 # doc = Document()
 
-# B) EDITING an EXISTING document (Preserve existing content):
+# B) EDITING an EXISTING document:
 # filename = 'existing_doc.docx'
 # doc = Document(filename)
 
-# 2. Substantive Paragraphs with Specific Font, Color & Size:
-# p = doc.add_paragraph()
-# run = p.add_run('India is a vibrant civilization known for its profound cultural diversity, ancient history, and linguistic pluralism. From the snow-capped Himalayas in the north to the tropical coastlines of the south, it encompasses hundreds of languages, traditions, and architectural marvels. In the modern era, the nation has emerged as a global technological powerhouse and the world’s most populous democracy, driving forward advancements in space exploration, digital infrastructure, and sustainable development while steadfastly preserving its timeless heritage.')
-# run.font.name = 'Impact'
-# run.font.size = Pt(4)
-# run.font.color.rgb = RGBColor(0, 128, 0) # Green
+# 2. Table Borders (Black, Visible, or Custom Colors):
+# - Setting standard visible black grid borders on table [T0]:
+#   table = doc.tables[0]
+#   table.style = 'Table Grid'
+#   # Or via explicit OpenXML tblBorders:
+#   tblPr = table._tbl.tblPr
+#   for old_b in tblPr.xpath('./w:tblBorders'): tblPr.remove(old_b)
+#   tblBorders = parse_xml(f'''
+#   <w:tblBorders {nsdecls("w")}>
+#       <w:top w:val="single" w:sz="8" w:space="0" w:color="000000"/>
+#       <w:left w:val="single" w:sz="8" w:space="0" w:color="000000"/>
+#       <w:bottom w:val="single" w:sz="8" w:space="0" w:color="000000"/>
+#       <w:right w:val="single" w:sz="8" w:space="0" w:color="000000"/>
+#       <w:insideH w:val="single" w:sz="8" w:space="0" w:color="000000"/>
+#       <w:insideV w:val="single" w:sz="8" w:space="0" w:color="000000"/>
+#   </w:tblBorders>''')
+#   tblPr.append(tblBorders)
 
-# 3. Saving:
+# 3. Image Layering & Text Wrapping Controls:
+# - INLINE Image (Default):
+#   p_img = doc.add_paragraph()
+#   p_img.add_run().add_picture(img_path, width=Inches(3.5))
+
+# - FLOATING Image: Behind Text (Underlay / Watermark) or In Front of Text (Overlay):
+#   def make_floating_picture(run, behind_text=False, wrap='none'):
+#       inline = run._r.xpath('.//wp:inline')
+#       if not inline: return
+#       inline_el = inline[0]
+#       extent = inline_el.xpath('.//wp:extent')[0]
+#       graphic = inline_el.xpath('.//a:graphic')[0]
+#       cx, cy = extent.get('cx'), extent.get('cy')
+#       behind_val = '1' if behind_text else '0'
+#       wrap_tag = '<wp:wrapSquare/>' if wrap == 'square' else '<wp:wrapNone/>'
+#       anchor_xml = f'''
+#       <wp:anchor {nsdecls("wp")} distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="251658240" behindDoc="{behind_val}" locked="0" layoutInCell="1" allowOverlap="1">
+#         <wp:simplePos x="0" y="0"/>
+#         <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+#         <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+#         <wp:extent cx="{cx}" cy="{cy}"/>
+#         <wp:effectExtent l="0" t="0" r="0" b="0"/>
+#         {wrap_tag}
+#         <wp:docPr id="1" name="Picture"/>
+#       </wp:anchor>'''
+#       anchor = parse_xml(anchor_xml)
+#       anchor.append(graphic)
+#       drawing = inline_el.getparent()
+#       drawing.remove(inline_el)
+#       drawing.append(anchor)
+
+# 4. Page Borders:
+# - Standard line borders or graphic/art borders ('stars', 'certificateBanner', 'vine'):
+#   ns = nsdecls('w')
+#   for section in doc.sections:
+#       sectPr = section._sectPr
+#       for pb in sectPr.xpath('./w:pgBorders'): sectPr.remove(pb)
+#       sectPr.append(parse_xml(f'''
+#       <w:pgBorders {ns} w:offsetFrom="text">
+#           <w:top w:val="single" w:sz="24" w:space="24" w:color="000000"/>
+#           <w:left w:val="single" w:sz="24" w:space="24" w:color="000000"/>
+#           <w:bottom w:val="single" w:sz="24" w:space="24" w:color="000000"/>
+#           <w:right w:val="single" w:sz="24" w:space="24" w:color="000000"/>
+#       </w:pgBorders>'''))
+
+# 5. Saving:
 # doc.save(filename)
 """
 
@@ -70,7 +129,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
         lines = text.splitlines()
         code_start_keywords = (
             "import ", "from ", "#", "doc =", "doc=", "def ", "class ",
-            "table =", "table=", "p =", "p=", "run =", "run=", "filename =", "filename="
+            "table =", "table=", "p =", "p=", "run =", "run=", "filename =", "filename=", "p_img ="
         )
         start_idx = 0
         found_code = False
@@ -114,14 +173,11 @@ Generate clean, accurate, production-ready Python code using the python-docx lib
 
 CRITICAL RULES:
 1. Generate ONLY valid, executable Python code with all necessary imports.
-2. PARAGRAPH DEPTH: When asked to write or add a paragraph about a topic, write a full, well-developed, substantive paragraph (4-6 comprehensive sentences with depth), not just a single brief sentence!
-3. PRESERVE EXISTING FILES: When editing an existing document, load it with `doc = Document(filename)` and append/modify without wiping existing content.
-4. NEW FILES: When creating a new document, use `doc = Document()`.
-5. FORMATTING & COLORS: Accurately apply requested fonts (e.g. Impact), colors (RGBColor), and sizes (Pt).
-6. BULLET POINTS: Put bullet text directly into `doc.add_paragraph('Bullet text', style='List Bullet')`.
-7. TABLES: Use `table.cell(r, c).text = ...` and `table.style = 'Table Grid'`.
-8. Always save the document at the end with `doc.save(filename)`.
-9. No conversational explanations, output ONLY executable Python code."""
+2. TABLE BORDERS: To make table borders visible/black, set `table.style = 'Table Grid'` or append `<w:tblBorders>` XML to `table._tbl.tblPr`.
+3. PARAGRAPH & TABLE IDENTIFIERS ([P0], [P1], [T0]...): Use exact indices `doc.paragraphs[idx]` or `doc.tables[idx]` from the provided Document Map.
+4. PRESERVE EXISTING CONTENT: When editing, load with `doc = Document(filename)` and modify in-place.
+5. Always save the document at the end with `doc.save(filename)`.
+6. No conversational explanations, output ONLY executable Python code."""
 
         user_content = task_description
         if error_context:
@@ -178,7 +234,7 @@ CRITICAL RULES:
             else:
                 doc_inst = Document()
 
-        # Setup namespace
+        # Setup namespace with all docx and oxml primitives
         namespace: Dict[str, Any] = {
             "os": os,
             "re": re,
@@ -193,7 +249,9 @@ CRITICAL RULES:
             "WD_ALIGN_PARAGRAPH": WD_ALIGN_PARAGRAPH,
             "WD_TABLE_ALIGNMENT": WD_TABLE_ALIGNMENT,
             "parse_xml": parse_xml,
+            "OxmlElement": OxmlElement,
             "nsdecls": nsdecls,
+            "qn": qn,
             "Path": Path,
         }
 

@@ -17,11 +17,11 @@ Usage:
 """
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-from .config import AutomationConfig
-from .pipeline import WordAutomationPipeline
+import argparse # Module to make adding arguments to function calling much faster and easier -> handles both positional and optional arguments
+import json # Encoding of heirarchial information so that its easier to parse -> Either convert from python format to JSON or from JSON to python format
+import sys # Gives access to certain functions/objects which directly work with the interpreter/are maintained by the interpreter
+from .config import AutomationConfig # Imported from the config.py file -> Creates a populated config file which has the values for all the API_KEY, URL etc
+from .pipeline import WordAutomationPipeline # Just to execute one request end to end
 
 
 def main():
@@ -60,8 +60,14 @@ def main():
         default=None,
         help="Override Nemotron model",
     )
+    parser.add_argument(
+        "--folder", 
+        type = str, 
+        default = None, 
+        help = "Puts the file in a pre-determined folder",
+    )
 
-    args = parser.parse_args()
+    args = parser.parse_args() # Runs parser and puts everything in a namespace object -> A space of all the different names and what objects they reference
 
     config = AutomationConfig.from_env()
     if args.model:
@@ -92,6 +98,7 @@ def main():
                     target_file=args.doc,
                     overwrite=args.overwrite,
                     verbose=not args.quiet,
+                    folder = args.folder
                 )
                 if args.json:
                     print("\nJSON Result:")
@@ -108,6 +115,7 @@ def main():
         target_file=args.doc,
         overwrite=args.overwrite,
         verbose=not args.quiet,
+        folder = args.folder
     )
     if args.json:
         print("\nJSON Result:")
